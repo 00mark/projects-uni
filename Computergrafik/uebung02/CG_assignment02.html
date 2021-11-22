@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        .slidecontainer {
+            width: 500px;
+        }
+
+        .slider {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="myCanvas" width="500" height="500" style="border:1px solid #d3d3d3;"
+    onmousedown="mouseAction(event, 1)" onmouseup="mouseAction(event, -1)"
+    onmousemove="mouseAction(event, 0)">
+Your browser does not support the HTML5 canvas tag.</canvas>
+
+<div class="slidecontainer">
+<p>Rotation X: <span id="rotValueX"></span></p>
+    <input type="range" min="-180" max="180" value="0" class="slider" id="rotX">
+</div>
+
+<div class="slidecontainer">
+<p>Rotation Y: <span id="rotValueY"></span></p>
+    <input type="range" min="-180" max="180" value="0" class="slider" id="rotY">
+</div>
+
+<div class="slidecontainer">
+<p>Rotation Z: <span id="rotValueZ"></span></p>
+    <input type="range" min="-180" max="180" value="0" class="slider" id="rotZ">
+</div>
+
+<div class="slidecontainer">
+<p>Camera Z Position: <span id="camPosZ"></span></p>
+    <input type="range" min="100" max="1000" value="300" class="slider" id="camZ">
+</div>
+
+
+<script type="text/javascript">
+    const size = 500; // size of canvas
+    const c = document.getElementById("myCanvas");
+    const ctx = c.getContext("2d");
+
+    /**
+     * A 3D point
+     */
+    class Point3D {
+
+        constructor(x=0, y=0, z=0, w=1) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.w = w;
+        }
+
+        /**
+         * Dehomogenizes this point
+         */
+        dehomogen() {
+            let p = new Point3D();
+            p.x = this.x / this.w;
+            p.y = this.y / this.w;
+            p.z = this.z / this.w;
+            p.w = 1;
+            return p;
+        }
+    }
+
+    /**
+     * A 3D vector
+     */
+    class Vector3D {
+
+        constructor(x=0, y=0, z=0) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+
+        /**
+         * Cross product
+         * @param {Vector3D} v
+         */
+        cross(v) {
+            let c = new Vector3D();
+            c.x = this.y * v.z - this.z * v.y;
+            c.y = this.z * v.x - this.x * v.z;
+            c.z = this.x * v.y - this.y * v.x;
+            return c;
+        }
+        /**
+         * Normalize this vector
+         */
+        normalize() {
+            let norm = Math.sqrt(this.x*this.x + this.y*this.y + this.z*this.z);
+            let v = new Vector3D(this.x/norm, this.y/norm, this.z/norm);
+            return v;
+        }
+
+        /**
+         * Dot product (scalar product)
+         * @param {Vector3D} v
+         */
+        dot(v) {
+            return this.x * v.x + this.y * v.y + this.z * v.z;
+        }
+    }
+
+
+    // 4d matrix protoype
+    class Matrix4D {
+
+        constructor(
+            xx = 1, yx = 0, zx = 0, wx = 0,
+            xy = 0, yy = 1, zy = 0, wy = 0,
+            xz = 0, yz = 0, zz = 1, wz = 0,
+            xw = 0, yw = 0, zw = 0, ww = 1
+        ) {
+            this.xx = xx;
+            this.yx = yx;
+            this.zx = zx;
+            this.wx = wx;
+            this.xy = xy;
+            this.yy = yy;
+            this.zy = zy;
+            this.wy = wy;
+            this.xz = xz;
+            this.yz = yz;
+            this.zz = zz;
+            this.wz = wz;
+            this.xw = xw;
+            this.yw = yw;
+            this.zw = zw;
+            this.ww = ww;
+        }
+
+        /**
+         * Matrix multiplication
+         * @param {Matrix4D} m
+         */
+        mulMat(m) {
+            let n = new Matrix4D ();
+            n.xx = m.xx * this.xx + m.xy * this.yx + m.xz * this.zx + m.xw * this.wx;
+            n.xy = m.xx * this.xy + m.xy * this.yy + m.xz * this.zy + m.xw * this.wy;
+            n.xz = m.xx * this.xz + m.xy * this.yz + m.xz * this.zz + m.xw * this.wz;
+            n.xw = m.xx * this.xw + m.xy * this.yw + m.xz * this.zw + m.xw * this.ww;
+            n.yx = m.yx * this.xx + m.yy * this.yx + m.yz * this.zx + m.yw * this.wx;
+            n.yy = m.yx * this.xy + m.yy * this.yy + m.yz * this.zy + m.yw * this.wy;
+            n.yz = m.yx * this.xz + m.yy * this.yz + m.yz * this.zz + m.yw * this.wz;
+            n.yw = m.yx * this.xw + m.yy * this.yw + m.yz * this.zw + m.yw * this.ww;
+            n.zx = m.zx * this.xx + m.zy * this.yx + m.zz * this.zx + m.zw * this.wx;
+            n.zy = m.zx * this.xy + m.zy * this.yy + m.zz * this.zy + m.zw * this.wy;
+            n.zz = m.zx * this.xz + m.zy * this.yz + m.zz * this.zz + m.zw * this.wz;
+            n.zw = m.zx * this.xw + m.zy * this.yw + m.zz * this.zw + m.zw * this.ww;
+            n.wx = m.wx * this.xx + m.wy * this.yx + m.wz * this.zx + m.ww * this.wx;
+            n.wy = m.wx * this.xy + m.wy * this.yy + m.wz * this.zy + m.ww * this.wy;
+            n.wz = m.wx * this.xz + m.wy * this.yz + m.wz * this.zz + m.ww * this.wz;
+            n.ww = m.wx * this.xw + m.wy * this.yw + m.wz * this.zw + m.ww * this.ww;
+            return n;
+        }
+
+        /**
+         * Matrix vector product
+         * @param {Point3D} pIn
+         */
+        mulVec(pIn) {
+            let p = new Point3D();
+            p.x = pIn.x * this.xx + pIn.y * this.yx + pIn.z * this.zx + pIn.w * this.wx;
+            p.y = pIn.x * this.xy + pIn.y * this.yy + pIn.z * this.zy + pIn.w * this.wy;
+            p.z = pIn.x * this.xz + pIn.y * this.yz + pIn.z * this.zz + pIn.w * this.wz;
+            p.w = pIn.x * this.xw + pIn.y * this.yw + pIn.z * this.zw + pIn.w * this.ww;
+            return p;
+        }
+    }
+
+    // Create array of points
+    let pointarray = [];
+    let rotX = 0;
+    let rotY = 0;
+    let rotZ = 0;
+    let camZ = 3;
+
+    // Draw point at x,y with given color and radius
+    function drawPoint (x, y, hexcolor='#000000', radius=1) {
+        ctx.beginPath();
+        ctx.arc(x + 0.5*size, y + 0.5*size, radius, 0, 2 * Math.PI, false);
+        ctx.fillStyle = hexcolor;
+        ctx.fill();
+    }
+
+    function createPoints() {
+        // Cube
+        let step = 0.1;
+        for(let z_val = -1; z_val <= 1; z_val += step){
+            pointarray.push(new Point3D(-1, -1, z_val));
+            pointarray.push(new Point3D(1, -1, z_val));
+            pointarray.push(new Point3D(-1, 1, z_val));
+            pointarray.push(new Point3D(1, 1, z_val));
+        }
+        for(let x_val = -1 + step; x_val <= 1 - step; x_val += step){
+            pointarray.push(new Point3D(x_val, -1, -1));
+            pointarray.push(new Point3D(x_val, -1, 1));
+            pointarray.push(new Point3D(x_val, 1, -1));
+            pointarray.push(new Point3D(x_val, 1, 1));
+        }
+        for(let y_val = -1 + step; y_val <= 1 - step; y_val += step){
+            pointarray.push(new Point3D(-1, y_val, -1));
+            pointarray.push(new Point3D(-1, y_val, 1));
+            pointarray.push(new Point3D(1, y_val, -1));
+            pointarray.push(new Point3D(1, y_val, 1));
+        }
+    }
+
+    // Transform array of points
+    function transformPoints(pointarray) {
+        let transMat = new Matrix4D(
+            1,0,0,0,
+            0,1,0,0,
+            0,0,1,0,
+            0,0,0,1
+        );
+        let rotZ_rad = rotZ * Math.PI / 180;
+        // z-rotation
+        let rotZMat = new Matrix4D(
+            Math.cos(rotZ_rad), -Math.sin(rotZ_rad), 0, 0,
+            Math.sin(rotZ_rad), Math.cos(rotZ_rad) , 0, 0,
+            0                 , 0                  , 1, 0,
+            0                 , 0                  , 0, 1
+        );
+
+        let rotX_rad = rotX * Math.PI / 180;
+        // x-rotation
+        let rotXMat = new Matrix4D(
+            1, 0                 , 0                  , 0,
+            0, Math.cos(rotX_rad), -Math.sin(rotX_rad), 0,
+            0, Math.sin(rotX_rad), Math.cos(rotX_rad) , 0,
+            0, 0                 , 0                  , 1
+        );
+
+        let rotY_rad = rotY * Math.PI / 180;
+        // y-rotation
+        let rotYMat = new Matrix4D(
+            Math.cos(rotY_rad) , 0, Math.sin(rotY_rad), 0,
+            0                  , 1, 0                 , 0,
+            -Math.sin(rotY_rad), 0, Math.cos(rotY_rad), 0,
+            0                  , 0, 0                 , 1
+        );
+
+        let rotMat = rotXMat.mulMat(rotYMat.mulMat(rotZMat));
+
+        let camVec = new Vector3D(0, 0, camZ);
+        let rightVec = new Vector3D(1, 0, 0);
+        let upVec = new Vector3D(0, 1, 0);
+        let dirVec = new Vector3D(0, 0, -1);
+
+        // lookAt
+        let lookAtMat = new Matrix4D(
+            rightVec.x, rightVec.y, rightVec.z, -rightVec.dot(camVec),
+            upVec.x   , upVec.y   , upVec.z   , -upVec.dot(camVec)   ,
+            -dirVec.x , -dirVec.y , -dirVec.z , dirVec.dot(camVec)   ,
+            0         , 0         , 0         , 1                    
+        );
+
+        transMat = lookAtMat.mulMat(rotMat);
+
+        let pointsTrans = [];
+        for (let i = 0; i < pointarray.length; i++) {
+            pointsTrans.push(transMat.mulVec(pointarray[i]));
+        }
+
+        return pointsTrans;
+    }
+
+
+    // Project array of points
+    function projectPoints(pointarray) {
+        let pointsProj = [];
+
+        let projMat = new Matrix4D(
+            1, 0, 0 , 0,
+            0, 1, 0 , 0,
+            0, 0, 1 , 0,
+            0, 0, -1, 0
+        );
+
+        let scaleMat = new Matrix4D(
+            size / 3, 0       , 0, 0,
+            0       , size / 3, 0, 0,
+            0       , 0       , 1, 0,
+            0       , 0       , 0, 1
+        );
+
+        let projScaleMat = scaleMat.mulMat(projMat);
+
+        for (let i = 0; i < pointarray.length; i++) {
+            pointsProj.push(projScaleMat.mulVec(pointarray[i]).dehomogen());
+        }
+        return pointsProj;
+    }
+
+
+    // Draw points in pointarray
+    function drawPoints(pointarray) {
+        for (var i = 0; i < pointarray.length; i++) {
+            var point = pointarray[i];
+            var hexcolor = "#000000";
+            drawPoint(point.x, point.y, hexcolor, 2);
+        }
+    }
+
+
+    // Update canvas
+    function updateCanvas() {
+        ctx.clearRect(0, 0, size, size);
+        var pointsTrans = transformPoints(pointarray);
+        var pointsProj = projectPoints(pointsTrans);
+        drawPoints(pointsProj);
+    }
+
+
+    // Mouse funcionality
+    let mouseDown = false;
+    let mouseXOld = 0;
+    let mouseYOld = 0;
+    let mouseRotMat = new Matrix4D();
+
+    function mouseAction(event, clicked) {
+        if (clicked == 1) {
+            mouseDown = true;
+            mouseXOld = event.clientX;
+            mouseYOld = event.clientY;
+        } else if (clicked == -1) {
+            mouseDown = false;
+        }
+
+        if (mouseDown) {
+            const mouseX = event.clientX;
+            const mouseY = event.clientY;
+            // check if mouse movement is at least one pixel of canvas
+            if ((mouseX != mouseXOld) || (mouseY != mouseYOld)) {
+                const x1 = mouseXOld - 0.5 * size;
+                const y1 = mouseYOld - 0.5 * size;
+                const x2 = mouseX - 0.5 * size;
+                const y2 = mouseY - 0.5 * size;
+// BEGIN BONUS
+
+// END BONUS
+                updateCanvas();
+                mouseXOld = mouseX;
+                mouseYOld = mouseY;
+            }
+        }
+    }
+
+
+    // slider functionality
+    const sliderRotX = document.getElementById("rotX");
+    const sliderRotY = document.getElementById("rotY");
+    const sliderRotZ = document.getElementById("rotZ");
+    const sliderCamZ = document.getElementById("camZ");
+    const dispRotX = document.getElementById("rotValueX");
+    const dispRotY = document.getElementById("rotValueY");
+    const dispRotZ = document.getElementById("rotValueZ");
+    const dispCamZ = document.getElementById("camPosZ");
+    dispRotX.innerHTML = rotX;
+    dispRotY.innerHTML = rotY;
+    dispRotZ.innerHTML = rotZ;
+    dispCamZ.innerHTML = camZ;
+    sliderRotX.oninput = function() {
+        rotX = Number.parseFloat(this.value);
+        dispRotX.innerHTML = rotX;
+        updateCanvas();
+    }
+    sliderRotY.oninput = function() {
+        rotY = Number.parseFloat(this.value);
+        dispRotY.innerHTML = rotY;
+        updateCanvas();
+    }
+    sliderRotZ.oninput = function() {
+        rotZ = Number.parseFloat(this.value);
+        dispRotZ.innerHTML = rotZ;
+        updateCanvas();
+    }
+    sliderCamZ.oninput = function() {
+        camZ = Number.parseFloat(this.value)/100;
+        dispCamZ.innerHTML = camZ;
+        updateCanvas();
+    }
+
+
+    // Set correct sizes
+    function setSizes() {
+        document.getElementById("myCanvas").setAttribute("width", size);
+        document.getElementById("myCanvas").setAttribute("height", size);
+    }
+
+    // create points and init canvas
+    setSizes();
+    createPoints();
+    updateCanvas();
+
+</script>
+
+</body>
+</html>

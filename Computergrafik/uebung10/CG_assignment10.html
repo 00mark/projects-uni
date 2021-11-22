@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        .option {
+            min-width: 500px;
+            margin: 5px;
+            padding: 5px;
+            border: 4px outset;
+        }
+
+        .separate {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        label { font-weight: bold; }
+
+        canvas {
+            border: thin solid #d3d3d3;
+            min-width: 500px;
+        }
+
+        body {
+            margin-bottom: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            display: flex;
+            flex-wrap: wrap;
+        }
+        </style>
+</head>
+<body>
+
+<canvas id="myCanvas" width="500" height="500" onmousedown="mouseAction(event, 1)"
+    onmouseup="mouseAction(event, -1)" onmousemove="mouseAction(event, 0)">
+    Your browser does not support the HTML5 canvas tag.
+</canvas>
+<div style="padding: 10px;">
+    <div class="option separate">
+        <label for="shadowB">Schatten:</label>
+        <input type="checkbox" id="shadowB" onclick="shadowBFunction()">
+    </div>
+</div>
+
+<script type="text/javascript">
+    "use strict";
+
+    ///// Math Methods /////
+
+    class Vector3D {
+
+        constructor(x=0, y=0, z=0)  {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+
+        // matrix vector product
+        cross(v) {
+            return new Vector3D(
+                this.y * v.z - this.z * v.y,
+                this.z * v.x - this.x * v.z,
+                this.x * v.y - this.y * v.x
+            );
+        }
+
+        // normalize vector
+        normalize() {
+            const norm = Math.sqrt(this.x * this.x + this.y * this.y + this.z * this.z);
+            return new Vector3D(this.x / norm, this.y / norm, this.z / norm);
+        }
+
+        length() {
+            return Math.sqrt(this.x*this.x + this.y*this.y + this.z*this.z);
+        }
+
+        // dot product
+        dot(v) {
+            return this.x * v.x + this.y * v.y + this.z * v.z;
+        }
+
+        // multiplication by scalar
+        mul(s) {
+            return new Vector3D(this.x * s, this.y * s, this.z * s);
+        }
+
+        // pointwise multiplication
+        mulPw(vIn) {
+            return new Vector3D(this.x * vIn.x, this.y * vIn.y, this.z * vIn.z);
+        }
+
+        // add
+        add(vIn) {
+            return new Vector3D(this.x + vIn.x, this.y + vIn.y, this.z + vIn.z);
+        }
+
+        // substract
+        sub(vIn) {
+            return new Vector3D(this.x - vIn.x, this.y - vIn.y, this.z - vIn.z);
+        }
+
+    }
+
+    ///// Object Methods /////
+
+    class Color {
+
+        constructor(r = 0, g = 0, b = 0, a = 0) {
+            this.r = r;
+            this.g = g;
+            this.b = b;
+            this.a = a;
+            this.rgba = [this.r, this.g, this.b, this.a];
+            this.rgb = [this.r, this.g, this.b];
+        }
+
+        toHexString() {
+            return `#${toHex(this.r)}${toHex(this.g)}${toHex(this.b)}`;
+        }
+
+        toRgbVec() {
+            return new Vector3D(this.r, this.g, this.b);
+        }
+    }
+
+    class Material {
+
+        constructor(color=new Color(), cSpec=1, shine=50, reflexion=1) {
+            this.c = color;
+            this.s = shine;
+            this.r = reflexion;
+            this.cSpec = cSpec;
+        }
+    }
+
+    class Light {
+
+        constructor(position=new Vector3D(), color=new Color(), intensity=1) {
+            this.p = position;
+            this.c = color;
+            this.i = intensity;
+        }
+    }
+
+    class Sphere {
+
+        constructor(center=new Vector3D(), radius=0.2*size , material=new Material()) {
+            this.c = center;
+            this.r = radius;
+            this.m = material;
+        }
+
+        // check if sphere intersects with ray
+        intersect(ray, startPos) {
+            let dist = Infinity;
+            let pos;
+            let reflectionVec;
+
+            const oSubC = startPos.sub(this.c);
+            const lDotOC = ray.dot(oSubC);
+            const radicand = lDotOC * lDotOC - oSubC.dot(oSubC) + this.r*this.r;
+
+            if (radicand > 0) {
+                const root = Math.sqrt(radicand);
+                if ((-lDotOC - root) > 0) {
+                    dist = -lDotOC - root;
+                } else if ((-lDotOC + root) > 0) {
+                    dist = -lDotOC + root;
+                }
+            }
+
+            if (dist != Infinity) {
+                pos = startPos.add(ray.mul(dist));
+                const normal = (pos.sub(this.c)).normalize();
+                reflectionVec = ray.sub(normal.mul(2*normal.dot(ray))).normalize();
+            }
+
+            return [pos, dist, reflectionVec]
+        }
+
+        // intersect, compute color and reflection
+        getLighting (position) {
+            const normal = (position.sub(this.c)).normalize();
+            return shader(normal, position, this.m);
+        }
+    }
+
+// BEGIN AUFGABE b
+    class Plane {
+
+    }
+// END AUFGABE b
+
+    ///// Helper Methods /////
+
+    function toHex(n) {
+        let hex = n.toString(16);
+        while (hex.length < 2) {
+            hex = "0" + hex;
+        }
+        return hex;
+    }
+
+    ///// Drawing Methods /////
+
+    // Draw point at x,y with given color
+    function drawPoint(x, y, color = new Color(0, 0, 0, 255)) {
+        d[y*4*size+x*4+0]   = color.r;
+        d[y*4*size+x*4+1]   = color.g;
+        d[y*4*size+x*4+2]   = color.b;
+        d[y*4*size+x*4+3]   = color.a;
+    }
+
+    function shader (normal, position, material) {
+        let vLighting = new Vector3D(0, 0, 0);
+        let vSpecular = new Vector3D(0, 0, 0);
+        lights.forEach(light => {
+            // positional
+            let positionalLightColor = light.c;
+            let positionalVector = light.p.sub(position).normalize();
+            let cPositional = light.i;
+
+            let VisibilityFactor = 1.0;
+            if (shadowing) {
+// BEGIN AUFGABE d
+
+// END AUFGABE d
+            }
+
+            let positional = Math.max(normal.dot(positionalVector), 0);
+            let positionalLight = positionalLightColor.toRgbVec().mul(positional).mul(cPositional);
+            vLighting = vLighting.add(positionalLight.mul(VisibilityFactor));
+
+            // specular
+            let specularLightColor = light.c;
+            let specularVector = light.p.sub(position).normalize();
+            let cSpecular = light.i;
+            let camVec = (position.sub(camPos)).normalize().mul(-1);
+            let h = specularVector.add(camVec).normalize();
+            let specular = normal.dot(h);
+            let specularLight = specularLightColor.toRgbVec().mul(Math.pow(specular, material.s)).mul(cSpecular);
+            vSpecular = vSpecular.add(specularLight.mul(VisibilityFactor));
+        });
+
+        const c = material.c.toRgbVec().mulPw(vLighting);
+        return (c.add(vSpecular.mul(material.cSpec).mul(255)));
+    }
+
+    ///// Globals /////
+
+    const size = 700; // Size of canvas
+    const maxDepth = 3; // number of recursions
+    const testColor = new Color(230, 230, 230, 255); // testcolor with which canvas is filled
+    const backColor = new Color(0, 0, 0, 255); // background color for raycasting
+    const camPos = new Vector3D(0.5*size, 0.5*size, -0.8*size);
+
+    let objects = [];
+    let lights = [];
+
+    const c = document.getElementById("myCanvas");
+    const ctx = c.getContext("2d");
+    let id = ctx.createImageData(size,size);
+    let d  = id.data;
+
+    let shadowing = false;
+    function shadowBFunction () {
+        shadowing = document.getElementById("shadowB").checked;
+    }
+
+    ///// Tracing Methods /////
+
+    function getNearestIntersection(ray, startPos) {
+        let idx = -1;
+        let dist = Infinity;
+        let pos, r;
+        const epsilon = 0.00001;
+
+        for (let i = 0; i < objects.length; i++) {
+            let Intersection = objects[i].intersect(ray, startPos);
+            let iPos = Intersection[0]
+            let iDist = Intersection[1];
+            let iReflect = Intersection[2];
+            if (epsilon < iDist && iDist < dist) {
+                dist = iDist;
+                pos = iPos;
+                idx = i;
+                r = iReflect;
+            }
+        }
+
+        return [idx, pos, dist, r];
+    }
+
+
+    function traceRay(startPos, ray, depth = 1) {
+        let Intersection = getNearestIntersection(ray, startPos);
+        let iIndex = Intersection[0]; // index of nearest intersected object
+        let iPos = Intersection[1]; // position of nearest intersection
+        let iDist = Intersection[2]; // distance from startPos to nearest intersection
+        let iReflect = Intersection[3]; // ray reflected at iPos
+
+        if (iIndex != -1) {
+            let color = objects[iIndex].getLighting(iPos);
+
+// BEGIN AUFGABE  c
+
+// END AUFGABE c
+
+            return new Color(color.x, color.y, color.z, 255);
+        } else {
+            return backColor;
+       }
+    }
+
+    let pix = 0;
+    function trace() {
+
+        for (var k = 0; k < 20000; k++) {
+            const i = pix % size;
+            const j = (pix - i)/size;
+
+// BEGIN AUFGABE a
+
+// END AUFGABE a
+
+            pix = (pix+15486277)%(size*size);
+       }
+
+       ctx.putImageData(id, 0, 0);
+       requestAnimationFrame(trace);
+    }
+
+    function traceScene() {
+        ctx.fillStyle = testColor.toHexString();
+        ctx.fillRect(0, 0, size, size);
+        trace();
+    }
+
+
+    ///// Init /////
+
+    // Spheres
+    let mat0 = new Material(new Color(255, 255, 200, 255), 1, 50, 0.4);
+    let mat1 = new Material(new Color(255, 200, 255, 255), 1, 50, 0.5);
+    let mat2 = new Material(new Color(200, 255, 255, 255), 0.5, 30, 0.25);
+    let mat3 = new Material(new Color(170, 200, 255, 255), 0.3, 10, 0.1);
+
+    objects.push(new Sphere(new Vector3D(0.7*size, 0.6*size, -0.1*size), 0.13*size, mat0));
+    objects.push(new Sphere(new Vector3D(0.3*size, 0.6*size, 0.0*size), 0.13*size, mat1));
+    objects.push(new Sphere(new Vector3D(0.5*size, 0.2*size, 0.1*size), 0.18*size, mat2));
+    objects.push(new Sphere(new Vector3D(0.5*size, 0.8*size, -0.2*size), 0.11*size, mat3));
+
+    // Planes
+    let white = new Color(255, 255, 255, 255);
+    let mat4 = new Material(white, 0.0, 50, 0.2);
+    objects.push(
+        new Plane(new Vector3D(0, 1, 0.8*size),
+        new Vector3D(1, 1, 0.8*size),
+        new Vector3D(1, 0, 0.8*size), mat4)
+    );
+    // Lights
+    lights.push(new Light(new Vector3D(0.0, 0.0, -size), new Color(1.0, 1.0,  0.9, 1), 0.4));
+    lights.push(new Light(new Vector3D(2*size, 0.0, -size), new Color(0.9, 0.9, 1.0, 1), 0.4));
+    lights.push(new Light(new Vector3D(size/2, 2*size, -2*size), new Color(1.0, 1.0, 0.9, 1), 0.3));
+
+    //set correct sizes
+    function setSizes() {
+        c.setAttribute("width", size);
+        c.setAttribute("height", size);
+    }
+
+    ///// Mouse Methods /////
+    let nearestDist, nearestIdx;
+    let mouseXOld, mouseYOld;
+    let mouseDown = false;
+    function mouseAction(event, clicked) {
+        if (clicked == 1) {
+            mouseDown = true;
+            mouseXOld = event.clientX;
+            mouseYOld = event.clientY;
+
+            // find nearest sphere
+            nearestDist = Infinity;
+            objects.forEach((obj, i) => {
+                if (!(obj instanceof Sphere)) {
+                    return;
+                }
+                const center = obj.c;
+                const dist = (center.x - mouseXOld)**2 + (center.y - mouseYOld)**2;
+
+                if (dist < nearestDist) {
+                    nearestDist = dist;
+                    nearestIdx = i;
+                }
+            });
+        } else if ( clicked == -1) {
+            mouseDown = false;
+        }
+
+        if (mouseDown) {
+            const mouseX = event.clientX;
+            const mouseY = event.clientY;
+            // check if mouse movement is at least one pixel of canvas
+            if (mouseX != mouseXOld || mouseY != mouseYOld) {
+                const x1 = mouseXOld;
+                const y1 = mouseYOld;
+                const x2 = mouseX;
+                const y2 = mouseY;
+
+                // move nearest object
+                objects[nearestIdx].c.x += (mouseX - mouseXOld);
+                objects[nearestIdx].c.y += (mouseY - mouseYOld);
+
+                mouseXOld = mouseX;
+                mouseYOld = mouseY;
+            }
+        }
+    }
+
+    setSizes();
+    traceScene();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        .slidecontainer {
+            width: 500px;
+        }
+
+        .slider {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="myCanvas" width="500" height="500" style="border:1px solid #d3d3d3;"
+    onmousedown="mouseAction(event, 1)" onmouseup="mouseAction(event, -1)"
+    onmousemove="mouseAction(event, 0)">
+Your browser does not support the HTML5 canvas tag.</canvas>
+
+<div>
+    Zeichne Linien: <input type="checkbox" id="dlines" value="c" onchange="lineCheckBoxFunction()">
+    Zeichne Dreiecke: <input type="checkbox" id="dtriangles" onchange="triangleCheckBoxFunction()">
+    Sortiere Dreiecke: <input type="checkbox" id="striangles" value="c" onchange="sortCheckBoxFunction()">
+</div>
+
+
+<script type="text/javascript">
+    const size = 500; // size of canvas
+    const c = document.getElementById("myCanvas");
+    const ctx = c.getContext("2d");
+
+    let imgd = ctx.createImageData(size,size);
+    let d  = imgd.data;
+
+    /**
+     * 3D point class
+     */
+    class Point3D {
+
+        constructor(x=0, y=0, z=0, w=1)  {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.w = w;
+        }
+
+        // dehomogenize point
+        dehomogen() {
+            var p = new Point3D();
+            p.x = this.x/this.w;
+            p.y = this.y/this.w;
+            p.z = this.z/this.w;
+            p.w = 1;
+            return p;
+        }
+    }
+
+    /**
+     * 3D vector class
+     */
+    class Vector3D {
+
+        constructor(x=0, y=0, z=0)  {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+
+        /**
+         * Matrix vector product
+         * @returns {Vector3D} a *new* result vector
+         */
+        cross(v) {
+            return new Vector3D(
+                this.y * v.z - this.z * v.y,
+                this.z * v.x - this.x * v.z,
+                this.x * v.y - this.y * v.x,
+            );
+        }
+
+        /**
+         * Normalize vector
+         * @returns {Vector3D} a *new* normalized vector
+         */
+        normalize() {
+            const norm = Math.sqrt(this.x*this.x + this.y*this.y + this.z*this.z);
+            return new Vector3D(this.x/norm, this.y/norm, this.z/norm);
+        }
+
+        /**
+         * Dot product
+         * @returns {Number}
+         */
+        dot(v) {
+            return this.x * v.x + this.y * v.y + this.z * v.z;
+        }
+    }
+
+    /**
+     * 4D matrix protoype
+     */
+    class Matrix4D {
+
+        constructor(
+            xx = 1, yx = 0, zx = 0, wx = 0,
+            xy = 0, yy = 1, zy = 0, wy = 0,
+            xz = 0, yz = 0, zz = 1, wz = 0,
+            xw = 0, yw = 0, zw = 0, ww = 1
+        ) {
+            this.xx = xx;
+            this.yx = yx;
+            this.zx = zx;
+            this.wx = wx;
+            this.xy = xy;
+            this.yy = yy;
+            this.zy = zy;
+            this.wy = wy;
+            this.xz = xz;
+            this.yz = yz;
+            this.zz = zz;
+            this.wz = wz;
+            this.xw = xw;
+            this.yw = yw;
+            this.zw = zw;
+            this.ww = ww;
+        }
+
+        /**
+         * Matrix multiplication
+         * @returns {Matrix4D}
+         */
+        mulMat(m) {
+            let n = new Matrix4D ();
+            n.xx = m.xx * this.xx + m.xy * this.yx + m.xz * this.zx + m.xw * this.wx;
+            n.xy = m.xx * this.xy + m.xy * this.yy + m.xz * this.zy + m.xw * this.wy;
+            n.xz = m.xx * this.xz + m.xy * this.yz + m.xz * this.zz + m.xw * this.wz;
+            n.xw = m.xx * this.xw + m.xy * this.yw + m.xz * this.zw + m.xw * this.ww;
+            n.yx = m.yx * this.xx + m.yy * this.yx + m.yz * this.zx + m.yw * this.wx;
+            n.yy = m.yx * this.xy + m.yy * this.yy + m.yz * this.zy + m.yw * this.wy;
+            n.yz = m.yx * this.xz + m.yy * this.yz + m.yz * this.zz + m.yw * this.wz;
+            n.yw = m.yx * this.xw + m.yy * this.yw + m.yz * this.zw + m.yw * this.ww;
+            n.zx = m.zx * this.xx + m.zy * this.yx + m.zz * this.zx + m.zw * this.wx;
+            n.zy = m.zx * this.xy + m.zy * this.yy + m.zz * this.zy + m.zw * this.wy;
+            n.zz = m.zx * this.xz + m.zy * this.yz + m.zz * this.zz + m.zw * this.wz;
+            n.zw = m.zx * this.xw + m.zy * this.yw + m.zz * this.zw + m.zw * this.ww;
+            n.wx = m.wx * this.xx + m.wy * this.yx + m.wz * this.zx + m.ww * this.wx;
+            n.wy = m.wx * this.xy + m.wy * this.yy + m.wz * this.zy + m.ww * this.wy;
+            n.wz = m.wx * this.xz + m.wy * this.yz + m.wz * this.zz + m.ww * this.wz;
+            n.ww = m.wx * this.xw + m.wy * this.yw + m.wz * this.zw + m.ww * this.ww;
+            return n;
+        }
+
+        /**
+         * Matrix vector product
+         * @returns {Point3D}
+         */
+        mulVec(pIn) {
+            let p = new Point3D();
+            p.x = pIn.x * this.xx + pIn.y * this.yx + pIn.z * this.zx + pIn.w * this.wx;
+            p.y = pIn.x * this.xy + pIn.y * this.yy + pIn.z * this.zy + pIn.w * this.wy;
+            p.z = pIn.x * this.xz + pIn.y * this.yz + pIn.z * this.zz + pIn.w * this.wz;
+            p.w = pIn.x * this.xw + pIn.y * this.yw + pIn.z * this.zw + pIn.w * this.ww;
+            return p;
+        }
+    }
+
+    // Draw point at x,y with given color and radius
+    function drawPoint (x, y, color=[0,0,0]) {
+        let xc = Math.round(x + 0.5*size);
+        let yc = Math.round(y + 0.5*size);
+        // draw into image data array
+        d[yc*4*size+xc*4] = color[0];
+        d[yc*4*size+xc*4+1] = color[1];
+        d[yc*4*size+xc*4+2] = color[2];
+        d[yc*4*size+xc*4+3] = 255;
+    }
+
+    ////// Line Methods /////
+
+    /**
+     * 3D line
+     */
+    class Line3D {
+
+        constructor(startpoint=new Point3D(), endpoint=new Point3D()) {
+            // deepcopy, to prevent side effects if lines would share points
+            this.sp = new Point3D(startpoint.x, startpoint.y, startpoint.z, startpoint.w);
+            this.ep = new Point3D(endpoint.x, endpoint.y, endpoint.z, endpoint.w);
+        }
+    }
+
+    // Create array of Lines
+    let linearray = [];
+    function createLines() {
+        let startX = -100;
+        let startY = -100;
+        let startZ = -100;
+        let len = 200;
+        // cube
+        for(let curZ = startZ; curZ <= startZ + len; curZ += len){
+            linearray.push(new Line3D(new Point3D(startX, startY, curZ), 
+                    new Point3D(startX + len, startY, curZ)));
+            linearray.push(new Line3D(new Point3D(startX, startY + len, curZ),
+                    new Point3D(startX + len, startY + len, curZ)));
+        }
+        for(let curY = startY; curY <= startY + len; curY += len){
+            linearray.push(new Line3D(new Point3D(startX, curY, startZ),
+                    new Point3D(startX, curY, startZ + len)));
+            linearray.push(new Line3D(new Point3D(startX + len, curY, startZ),
+                    new Point3D(startX + len, curY, startZ + len)));
+        }
+        for(let curX = startX; curX <= startX + len; curX += len){
+            linearray.push(new Line3D(new Point3D(curX, startY, startZ),
+                    new Point3D(curX, startY + len, startZ)));
+            linearray.push(new Line3D(new Point3D(curX, startY, startZ + len),
+                    new Point3D(curX, startY + len, startZ + len)));
+        }
+    }
+
+    let rotX = 0;
+    let rotY = 0;
+    let rotZ = 0;
+
+    // transform array of lines
+    function transformLines(linearray) {
+        const transMat = mouseRotMat;
+        // return new array, which has an entry of a transformed line for each line in 'linearray'
+        return linearray.map(line => {
+            return new Line3D(transMat.mulVec(line.sp), transMat.mulVec(line.ep));
+        });
+    }
+
+    // project array of lines
+    function projectLines(linearray) {
+        const ez = 0.8*size;
+        const projMat = new Matrix4D(
+            1,0,0,0,
+            0,1,0,0,
+            0,0,1,0,
+            0,0,-1/ez,1
+        );
+        // return new array, which has an entry of a projected line for each line in 'linearray'
+        return linearray.map(line => {
+            return new Line3D(projMat.mulVec(line.sp), projMat.mulVec(line.ep));
+        });
+    }
+
+    // draw line
+    function drawLine(line) {
+        const startpoint = (line.sp).dehomogen();
+        const endpoint = (line.ep).dehomogen();
+        let neg = 0;
+        let startp = startpoint;
+        let endp = endpoint;
+        if(startpoint.x > endpoint.x){
+            startp = endpoint;
+            endp = startpoint;
+        }
+        let m = (endp.y - startp.y) / (endp.x - startp.x);
+        if(m < 0){
+            neg = 1;
+            m *= -1;
+        }
+        // 1 pixel per column
+        if(m < 1){
+            // substract m if negativ
+            for(let i = 0, j = 0; i < endp.x - startp.x; i++, j += m - neg * 2 * m){
+                drawPoint(startp.x + i, Math.round(startp.y + j));
+            }
+        // 1 pixel per line
+        }else{
+            m = 1/m;
+            if(neg){
+                for(let i = 0, j = 0; i < startp.y - endp.y; i++, j += m){
+                    drawPoint(Math.round(startp.x + j), startp.y - i);
+                }
+            }else{
+                for(let i = 0, j = 0; i < endp.y - startp.y; i++, j += m){
+                    drawPoint(Math.round(startp.x + j), startp.y + i);
+                }
+            }
+        }
+        
+    }
+
+
+    // draw lines in linearray
+    function drawLines(linearray) {
+        for (var i = 0; i < linearray.length; i++) {
+            drawLine(linearray[i]);
+        }
+    }
+
+
+    ////// Triangle Methods //////
+
+    /**
+     * 3D triangle
+     */
+    class Triangle3D {
+
+        constructor(A=new Point3D, B=new Point3D(), C=new Point3D(), color=[0,0,0]) {
+            // deepcopy, to prevent side effects if lines would share points
+            this.A = new Point3D(A.x, A.y, A.z, A.w);
+            this.B = new Point3D(B.x, B.y, B.z, B.w);
+            this.C = new Point3D(C.x, C.y, C.z, C.w);
+            this.color = color;
+        }
+    }
+
+    // create array of Triangles
+    let trianglearray = [];
+    function createTriangles() {
+        let startX = -100;
+        let startY = -100;
+        let startZ = -100;
+        let len = 200;
+        // cube with each side made out of 2 triangles
+        for(let curZ = startZ; curZ <= startZ + len; curZ += len){
+            let p1 = new Point3D(startX + len, startY, curZ);
+            let p2 = new Point3D(startX, startY + len, curZ);
+            trianglearray.push(new Triangle3D(new Point3D(startX, startY, curZ),
+                    p1, p2, [0xff, 0, 0]));
+            trianglearray.push(new Triangle3D(new Point3D(startX + len, startY + len, curZ),
+                    p1, p2, [0, 0xff, 0]));
+        }
+        for(let curY = startY; curY <= startY + len; curY += len){
+            let p1 = new Point3D(startX, curY, startZ);
+            let p2 = new Point3D(startX + len, curY, startZ + len);
+            trianglearray.push(new Triangle3D(new Point3D(startX, curY, startZ + len),
+                    p1, p2, [0, 0, 0xff]));
+            trianglearray.push(new Triangle3D(new Point3D(startX + len, curY, startZ),
+                    p1, p2, [0xff, 0xff, 0]));
+        }
+        for(let curX = startX; curX <= startX + len; curX += len){
+            let p1 = new Point3D(curX, startY, startZ);
+            let p2 = new Point3D(curX, startY + len, startZ + len);
+            trianglearray.push(new Triangle3D(new Point3D(curX, startY + len, startZ),
+                    p1, p2, [0, 0xff, 0xff]));
+            trianglearray.push(new Triangle3D(new Point3D(curX, startY, startZ + len),
+                    p1, p2, [0xff, 0, 0xff]));
+        }
+    }
+
+
+    // transform array of triangles
+    function transformTriangles(trianglearray) {
+        const transMat = mouseRotMat;
+        return trianglearray.map(triangle => {
+            const ATrans = transMat.mulVec(triangle.A);
+            const BTrans = transMat.mulVec(triangle.B);
+            const CTrans = transMat.mulVec(triangle.C);
+            return new Triangle3D(ATrans, BTrans, CTrans, triangle.color);
+        });
+    }
+
+
+    // project array of triangles
+    function projectTriangles(trianglearray) {
+        const ez = 0.8*size;
+        const projMat = new Matrix4D(
+            1,0,0,0,
+            0,1,0,0,
+            0,0,1,0,
+            0,0,-1/ez,1
+        );
+        return trianglearray.map(triangle => {
+            const AProj = projMat.mulVec(triangle.A);
+            const BProj = projMat.mulVec(triangle.B);
+            const CProj = projMat.mulVec(triangle.C);
+            return new Triangle3D(AProj, BProj, CProj, triangle.color);
+        });
+    }
+
+
+    // draw triangle
+    function drawTriangle(triangle) {
+        const A = (triangle.A).dehomogen();
+        const B = (triangle.B).dehomogen();
+        const C = (triangle.C).dehomogen();
+        // bounding box
+        let xMax = Math.max(A.x, B.x, C.x);
+        let xMin = Math.min(A.x, B.x, C.x);
+        let yMax = Math.max(A.y, B.y, C.y);
+        let yMin = Math.min(A.y, B.y, C.y);
+        for(let i = xMin; i <= xMax; i++){
+            for(let j = yMin; j <= yMax; j++){
+                // barycentric coordinates
+                let alpha = det(B.x - i, C.x - i, B.y - j, C.y - j) / 
+                            det(B.x - A.x, C.x - A.x, B.y - A.y, C.y - A.y);
+                let beta = det(C.x - i, A.x - i, C.y - j, A.y - j) /
+                           det(B.x - A.x, C.x - A.x, B.y - A.y, C.y - A.y);
+                let gamma = 1 - alpha - beta;
+                // only draw if the pixel is contained inside the triangle
+                if(alpha >= 0 && beta >= 0 && gamma >= 0){
+                    drawPoint(i, j, triangle.color);
+                }
+            }
+        }
+    }
+
+    function det(x1, x2, y1, y2){
+        return x1 * y2 - y1 * x2;
+    }
+
+    // draw triangles in trianglearray
+    let sortTri = false;
+    function drawTriangles(trianglearray) {
+        if (sortTri) {
+            trianglearray.sort(function(a, b) {
+                return (a.A.z + a.B.z + a.C.z) - (b.A.z + b.B.z + b.C.z);
+            });
+        }
+        // draw all triangles in 'trianglearray'
+        trianglearray.forEach(triangle => drawTriangle(triangle));
+    }
+
+    // update canvas
+    let showLines = true;
+    let showTris = false;
+    function updateCanvas() {
+        ctx.clearRect(0, 0, size, size);
+        imgd = ctx.createImageData(size, size);
+        d = imgd.data;
+        if (showTris) {
+            drawTriangles(projectTriangles(transformTriangles(trianglearray)));
+        }
+        if (showLines) {
+            drawLines(projectLines(transformLines(linearray)));
+       }
+       ctx.putImageData(imgd, 0, 0);
+    }
+
+    // mouse functionality
+    let mouseDown = false;
+    let mouseXOld = 0;
+    let mouseYOld = 0;
+    let mouseRotMat = new Matrix4D();
+    function mouseAction(event, clicked) {
+        if (clicked == 1) {
+            mouseDown = true;
+            mouseXOld = event.clientX;
+            mouseYOld = event.clientY;
+        } else if (clicked == -1) {
+            mouseDown = false;
+        }
+
+        if (mouseDown) {
+            const mouseX = event.clientX;
+            const mouseY = event.clientY;
+            // check if mouse movement is at least one pixel of canvas
+            if ((mouseX != mouseXOld) || (mouseY != mouseYOld)) {
+                const x1 = mouseXOld - 0.5*size;
+                const y1 = mouseYOld - 0.5*size;
+                const x2 = mouseX - 0.5*size;
+                const y2 = mouseY - 0.5*size;
+                // compute V
+                function computeV (x, y, r) {
+                    if ((x*x + y*y) <= ((r*r)/2)) {
+                        var z = Math.sqrt(r*r - (x*x + y*y));
+                    } else {
+                        var z = ((r*r)/2)/Math.sqrt(x*x + y*y);
+                    }
+                    return new Vector3D(x, y, z).normalize();
+                }
+
+                // compute rotation axis and angle
+                let r = 0.2*size;
+                let v1 = computeV(x1, y1, r);
+                let v2 = computeV(x2, y2, r);
+                let n = v1.cross(v2).normalize();
+
+                // create rotation matrix corresponding to current mouse movement
+                let theta = Math.acos(v1.dot(v2));
+                let ct = Math.cos(theta);
+                let st = Math.sin(theta);
+                let rotMat = new Matrix4D(
+                    ct+n.x*n.x*(1-ct), n.x*n.y*(1-ct)-n.z*st, n.x*n.z*(1-ct)+n.y*st, 0,
+                    n.y*n.x*(1-ct)+n.z*st, ct+n.y*n.y*(1-ct), n.y*n.z*(1-ct)-n.x*st, 0,
+                    n.z*n.x*(1-ct)-n.y*st, n.z*n.y*(1-ct)+n.x*st, ct+n.z*n.z*(1-ct), 0,
+                    0, 0, 0, 1
+                );
+                // update rotation matrix of all mouse movements
+                mouseRotMat = rotMat.mulMat(mouseRotMat);
+
+                updateCanvas(mouseRotMat);
+                mouseXOld = mouseX;
+                mouseYOld = mouseY;
+            }
+        }
+    }
+
+    // checkbox functionality
+    document.getElementById("dlines").checked = true;
+    function lineCheckBoxFunction() {
+        showLines = document.getElementById("dlines").checked;
+        updateCanvas();
+    }
+
+    function triangleCheckBoxFunction() {
+        showTris = document.getElementById("dtriangles").checked;
+        updateCanvas();
+    }
+
+    function sortCheckBoxFunction() {
+        sortTri = document.getElementById("striangles").checked;
+        updateCanvas();
+    }
+
+    // set correct sizes
+    function setSizes () {
+        document.getElementById("myCanvas").setAttribute("width", size);
+        document.getElementById("myCanvas").setAttribute("height", size);
+    }
+
+    // create lines and triangles, init canvas
+    setSizes();
+    createLines();
+    createTriangles();
+    updateCanvas();
+
+</script>
+
+</body>
+</html>

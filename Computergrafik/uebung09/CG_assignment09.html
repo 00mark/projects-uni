@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        .slider {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 10px;
+            border: thin solid #d3d3d3;
+            outline: none;
+            margin: 5px 0px;
+        }
+        .option {
+            min-width: 500px;
+            margin: 5px;
+            padding: 5px;
+            border: 4px outset;
+        }
+        .separate {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        label { font-weight: bold; }
+        canvas {
+            border: thin solid #d3d3d3;
+            min-width: 500px;
+        }
+        body {
+            margin-bottom: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            display: flex;
+            flex-wrap: wrap;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="myCanvas" width="500" height="500" onmousedown="mouseAction(event, 1)"
+    onmouseup="mouseAction(event, -1)" onmousemove="mouseAction(event, 0)">
+    Your browser does not support the HTML5 canvas tag.
+</canvas>
+<div style="padding: 10px;">
+    <div class="option">
+        <label for="sliderT">t: <span id="t"></span></label>
+        <input type="range" min="0" max="1" value="0.5" step="0.01" class="slider" id="sliderT">
+    </div>
+    <div class="option">
+        <label for="sliderNP">Number of Points (3D): <span id="nP"></span></label>
+        <input type="range" min="2" max="100" value="20" step="1" class="slider" id="sliderNP">
+    </div>
+    <div class="option separate">
+        <label for="dcurve">Aufgabe 1 und 2 (Bezier Kurve) :</label>
+        <input type="checkbox" id="dcurve" value="c" onclick="curveCheckBoxFunction()">
+    </div>
+    <div class="option separate">
+        <label for="darea">Bonusaufgabe (Bezier Fl&auml;che) :</label>
+        <input type="checkbox" id="darea" onclick="areaCheckBoxFunction()">
+    </div>
+    <div class="option separate">
+        <label for="movePoints">Verschiebe Punkte :</label>
+        <input type="checkbox" id="movePoints" onclick="moveCheckBoxFunction()">
+    </div>
+</div>
+
+<script type="text/javascript">
+    "use strict";
+
+    const size = 750; // Size of canvas
+    const c = document.getElementById("myCanvas");
+    const ctx = c.getContext("2d");
+    let imgd = ctx.createImageData(size,size);
+    let d  = imgd.data;
+
+    // t for frame position
+    let tFrame = 0.5;
+
+    ///// Math /////
+
+    /**
+     * 3D point prototype
+     */
+    class Point3D {
+
+        constructor(x=0, y=0, z=0, w=1)  {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.w = w;
+        }
+
+        // dehomogenize point
+        dehomogen() {
+            return new Point3D(
+                this.x/this.w,
+                this.y/this.w,
+                this.z/this.w,
+                1
+            );
+        }
+
+        toVector() {
+            return new Vector3D(
+                this.x,
+                this.y,
+                this.z
+            );
+        }
+
+        // subtract two points
+        subtract(p) {
+            return new Point3D(
+                this.x - p.x,
+                this.y - p.y,
+                this.z - p.z,
+                this.w - p.w
+            );
+        }
+
+        // add two points
+        add(p) {
+            return new Point3D(
+                this.x + p.x,
+                this.y + p.y,
+                this.z + p.z,
+                this.w + p.w
+            );
+        }
+
+        // multiply by scalar
+        mul(s) {
+            return new Point3D(
+                this.x * s,
+                this.y * s,
+                this.z * s,
+                this.w * s
+            );
+        }
+    }
+
+
+    /**
+     * 3D vector
+     */
+    class Vector3D {
+
+        constructor(x=0, y=0, z=0)  {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+
+        // matrix vector product
+        cross(v) {
+            return new Vector3D(
+                this.y * v.z - this.z * v.y,
+                this.z * v.x - this.x * v.z,
+                this.x * v.y - this.y * v.x
+            );
+        }
+
+        // normalize vector
+        normalize() {
+            let norm = Math.sqrt(this.x*this.x + this.y*this.y + this.z*this.z);
+            return new Vector3D(this.x/norm, this.y/norm, this.z/norm);
+        }
+
+        // dot product
+        dot(v) {
+            return this.x * v.x + this.y * v.y + this.z * v.z;
+        }
+
+        // multiplication by scalar
+        mul(s) {
+            return new Vector3D(this.x * s, this.y * s, this.z * s);
+        }
+
+        // multiplication by vector (component-wise)
+        mulVec(v) {
+            return new Vector3D(this.x * v.x, this.y * v.y, this.z * v.z);
+        }
+
+        // add
+        add(vIn) {
+            return new Vector3D(this.x + vIn.x, this.y + vIn.y, this.z + vIn.z);
+        }
+
+        // subtract
+        sub(vIn) {
+            return new Vector3D(this.x - vIn.x, this.y - vIn.y, this.z - vIn.z);
+        }
+    }
+
+
+    /**
+     * 2D array
+     */
+    class Array2D {
+
+        constructor(width, height, value) {
+            this.width = width;
+            this.height = height;
+            this.data = new Array(this.length);
+            this.setAll(value);
+        }
+
+        get length() {
+            return this.width * this.height;
+        }
+
+        get(x, y) {
+            return this.data[x + y * this.width];
+        }
+
+        set(x, y, value) {
+            this.data[x + y * this.width] = value;
+        }
+
+        setAll(value) {
+            this.data.fill(value);
+        }
+    }
+
+
+    /**
+     * 4D matrix protoype
+     */
+    class Matrix4D {
+
+        constructor(
+            xx = 1, yx = 0, zx = 0, wx = 0,
+            xy = 0, yy = 1, zy = 0, wy = 0,
+            xz = 0, yz = 0, zz = 1, wz = 0,
+            xw = 0, yw = 0, zw = 0, ww = 1
+        ) {
+            this.xx = xx;
+            this.yx = yx;
+            this.zx = zx;
+            this.wx = wx;
+            this.xy = xy;
+            this.yy = yy;
+            this.zy = zy;
+            this.wy = wy;
+            this.xz = xz;
+            this.yz = yz;
+            this.zz = zz;
+            this.wz = wz;
+            this.xw = xw;
+            this.yw = yw;
+            this.zw = zw;
+            this.ww = ww;
+        }
+
+        // matrix multiplication
+        mulMat(m) {
+            let n = new Matrix4D ();
+            n.xx = m.xx * this.xx + m.xy * this.yx + m.xz * this.zx + m.xw * this.wx;
+            n.xy = m.xx * this.xy + m.xy * this.yy + m.xz * this.zy + m.xw * this.wy;
+            n.xz = m.xx * this.xz + m.xy * this.yz + m.xz * this.zz + m.xw * this.wz;
+            n.xw = m.xx * this.xw + m.xy * this.yw + m.xz * this.zw + m.xw * this.ww;
+            n.yx = m.yx * this.xx + m.yy * this.yx + m.yz * this.zx + m.yw * this.wx;
+            n.yy = m.yx * this.xy + m.yy * this.yy + m.yz * this.zy + m.yw * this.wy;
+            n.yz = m.yx * this.xz + m.yy * this.yz + m.yz * this.zz + m.yw * this.wz;
+            n.yw = m.yx * this.xw + m.yy * this.yw + m.yz * this.zw + m.yw * this.ww;
+            n.zx = m.zx * this.xx + m.zy * this.yx + m.zz * this.zx + m.zw * this.wx;
+            n.zy = m.zx * this.xy + m.zy * this.yy + m.zz * this.zy + m.zw * this.wy;
+            n.zz = m.zx * this.xz + m.zy * this.yz + m.zz * this.zz + m.zw * this.wz;
+            n.zw = m.zx * this.xw + m.zy * this.yw + m.zz * this.zw + m.zw * this.ww;
+            n.wx = m.wx * this.xx + m.wy * this.yx + m.wz * this.zx + m.ww * this.wx;
+            n.wy = m.wx * this.xy + m.wy * this.yy + m.wz * this.zy + m.ww * this.wy;
+            n.wz = m.wx * this.xz + m.wy * this.yz + m.wz * this.zz + m.ww * this.wz;
+            n.ww = m.wx * this.xw + m.wy * this.yw + m.wz * this.zw + m.ww * this.ww;
+            return n;
+        }
+
+        // matrix vector product
+        mulVec(pIn) {
+            return new Point3D(
+                pIn.x * this.xx + pIn.y * this.yx + pIn.z * this.zx + pIn.w * this.wx,
+                pIn.x * this.xy + pIn.y * this.yy + pIn.z * this.zy + pIn.w * this.wy,
+                pIn.x * this.xz + pIn.y * this.yz + pIn.z * this.zz + pIn.w * this.wz,
+                pIn.x * this.xw + pIn.y * this.yw + pIn.z * this.zw + pIn.w * this.ww
+            );
+        }
+    }
+
+
+    ////// Triangle Methods //////
+
+    /**
+     * 3D triangle
+     */
+    class Triangle3D {
+
+        constructor(A=new Point3D, B=new Point3D(), C=new Point3D(), color=[0,0,0,255]) {
+            // deepcopy, to prevent side effects if triangles would share points
+            this.A = new Point3D(A.x, A.y, A.z, A.w);
+            this.B = new Point3D(B.x, B.y, B.z, B.w);
+            this.C = new Point3D(C.x, C.y, C.z, C.w);
+            this.color = color;
+        }
+    }
+
+
+    function drawTriangle (triangle) {
+        const A = (triangle.A).dehomogen();
+        const B = (triangle.B).dehomogen();
+        const C = (triangle.C).dehomogen();
+
+        // compute barycentric coordinates of point with respect to triangle
+        function getBar (x, y) {
+            let detT = ((B.y - C.y) * (A.x - C.x)) + ((C.x - B.x) * (A.y - C.y));
+            let l1 = (((B.y - C.y) * (x - C.x)) + ((C.x - B.x) * (y - C.y))) / detT;
+            let l2 = (((C.y - A.y) * (x - C.x)) + ((A.x - C.x) * (y - C.y))) / detT;
+            let l3 = 1 - l1 - l2;
+            return [l1, l2, l3];
+        }
+
+        // check if point is in triangle
+        function inTri (pointBarCor) {
+            return !(pointBarCor[0] < 0 || pointBarCor[1] < 0 || pointBarCor[2] < 0);
+        }
+
+        const minX = Math.floor(Math.min(A.x, B.x, C.x));
+        const maxX = Math.ceil(Math.max(A.x, B.x, C.x));
+        const minY = Math.floor(Math.min(A.y, B.y, C.y));
+        const maxY = Math.ceil(Math.max(A.y, B.y, C.y));
+        for (let i = minX; i <= maxX; i++) {
+            for (let j = minY; j <= maxY; j++) {
+                let barCor = getBar(i,j)
+                if (inTri(barCor)) {
+                    drawPointWithZ(i, j, 0.5+0.5*(barCor[0]*A.z + barCor[1]*B.z + barCor[2]*C.z), [triangle.color[0], triangle.color[1], triangle.color[2]]);
+                }
+            }
+        }
+    }
+
+    // draw triangles in trianglearray
+    function drawTriangles (trianglearray) {
+        trianglearray.forEach(triangle => drawTriangle(triangle));
+    }
+
+    ///// Drawing Methods /////
+    let zBuffer;
+
+    // initialize z-buffer
+    function initZBuf () {
+        zBuffer = new Array2D(size, size);
+        resetZBuf();
+    }
+
+    function resetZBuf () {
+        zBuffer.setAll(Number.NEGATIVE_INFINITY);
+    }
+
+    function drawPointWithZ (x, y, z, color) {
+        if (z > zBuffer.get(x+0.5*size, y+0.5*size)) {
+            zBuffer.set(x+0.5*size, y+0.5*size, z);
+            drawPoint(x, y, color);
+        }
+    }
+
+    let cAmbient = .3;
+    let cDiffuse = .7;
+    let cSpecular = .7;
+    let shine = 30;
+    let lightColor = new Vector3D(1.0,1.0,1.0);
+    let lightPos = new Point3D(size,-size,.5*size);
+    let camPos = new Point3D(0,0,size);
+    // light array of triangles
+    function lightTriangles(trianglearray) {
+        return trianglearray.map(triangle => {
+            let triColor = new Vector3D(triangle.color[0], triangle.color[1], triangle.color[2]);
+            let phongColor = new Vector3D(triangle.color[0], triangle.color[1], triangle.color[2]);
+
+            // flat shading with Phong reflection model
+            let p = new Point3D((triangle.A.x+triangle.B.x+triangle.C.x)/3, (triangle.A.y+triangle.B.y+triangle.C.y)/3, (triangle.A.z+triangle.B.z+triangle.C.z)/3);
+
+            let av = triangle.A.toVector();
+            let bv = triangle.B.toVector();
+            let cv = triangle.C.toVector();
+
+            let ab = bv.sub(av);
+            let ac = cv.sub(av);
+
+            let n = ab.cross(ac).normalize();
+            let l = lightPos.subtract(p).toVector().normalize();
+            let v = camPos.subtract(p).toVector().normalize();
+            let h = l.add(v).normalize();
+
+            // ambient
+            let ambientColor = triColor.mul(cAmbient).mulVec(lightColor);
+            // diffuse
+            let cosTheta = Math.max(0, n.dot(l));
+            let diffuseColor = triColor.mul(cDiffuse).mul(cosTheta).mulVec(lightColor);
+            // specular
+            let cosSpec = Math.max(0, n.dot(h));
+            let specularColor = lightColor.mul(cSpecular).mul(Math.pow(cosSpec, shine));
+
+            // add components together
+            phongColor = ambientColor.add(diffuseColor).add(specularColor);
+
+            return new Triangle3D(triangle.A, triangle.B, triangle.C, [Math.min(255, 255*phongColor.x),  Math.min(255, 255*phongColor.y),  Math.min(255, 255*phongColor.z)]);
+        });
+    }
+
+    // draw point at x,y with given color and radius
+    function drawPoint(x, y, color=[0,0,0]) {
+        const xc = Math.round(x + 0.5*size);
+        const yc = Math.round(y + 0.5*size);
+
+        d[yc*4*size+xc*4] = color[0];
+        d[yc*4*size+xc*4+1] = color[1];
+        d[yc*4*size+xc*4+2] = color[2];
+        d[yc*4*size+xc*4+3] = 255;
+    }
+
+    // draw circel at x,y with given color and radius
+    function drawCircle(point, hexcolor='#000000', radius=1) {
+        const pp = projectPoint(point);
+        ctx.beginPath();
+        ctx.arc(pp.x + 0.5*size, pp.y + 0.5*size, radius, 0, 2 * Math.PI, false);
+        ctx.fillStyle = hexcolor;
+        ctx.fill();
+    }
+
+    /**
+     * 3D line
+     */
+    class Line3D {
+
+        constructor(startpoint=new Point3D(), endpoint=new Point3D()) {
+            // deepcopy, to prevent side effects if lines would share points
+            this.sp = new Point3D(startpoint.x, startpoint.y, startpoint.z, startpoint.w);
+            this.ep = new Point3D(endpoint.x, endpoint.y, endpoint.z, endpoint.w);
+        }
+    }
+
+    // draw line
+    function drawLine(line, color='#000000', width=0.001*size) {
+
+        function drawLinePoint(x, y, hexcolor='#000000', radius = 0.002*size) {
+            ctx.beginPath();
+            ctx.arc(x + 0.5*size, y + 0.5*size, radius, 0, 2 * Math.PI, false);
+            ctx.fillStyle = hexcolor;
+            ctx.fill();
+        }
+
+        const startpoint = projectPoint(line.sp);
+        const endpoint = projectPoint(line.ep);
+        let x0 = startpoint.x;
+        let y0 = startpoint.y;
+        let x1 = endpoint.x;
+        let y1 = endpoint.y;
+
+        let steep = Math.abs(y1 - y0) > Math.abs(x1 - x0);
+        let tmp;
+        if (steep) {
+            tmp=x0; x0=y0; y0=tmp;
+            tmp=x1; x1=y1; y1=tmp;
+        }
+
+        if (x0 > x1) {
+            var sign = -1;
+            x0 *= -1;
+            x1 *= -1;
+        } else {
+            var sign = 1;
+        }
+
+        let dx = x1 - x0;
+        let dy = Math.abs(y1 - y0);
+        let error = ((dx / 2));
+
+        if (y0 < y1) {
+            var ystep = 1;
+        } else {
+            var ystep = -1;
+        }
+        let y = y0;
+
+        for(let x = x0; x <= x1; x++){
+            if (!steep) {
+                drawLinePoint(sign*x, y, color, width);
+            } else {
+                drawLinePoint(y, sign*x, color, width);
+            }
+            error = (error - dy);
+            if (error < 0) {
+                y += ystep;
+                error += dx;
+            }
+        }
+    }
+
+    /**
+     * Cubic Bezier curve
+     */
+    class BezierCurve {
+
+        constructor(p0=new Point3D(), p1=new Point3D(), p2=new Point3D(), p3=new Point3D()) {
+            this.p0 = new Point3D(p0.x, p0.y, p0.z, p0.w);
+            this.p1 = new Point3D(p1.x, p1.y, p1.z, p1.w);
+            this.p2 = new Point3D(p2.x, p2.y, p2.z, p2.w);
+            this.p3 = new Point3D(p3.x, p3.y, p3.z, p3.w);
+        }
+
+        drawFrame(t) {
+            function calculateB(points, bs, i, k, t) {
+                if(k == 0)
+                    return bs[i];
+                let val = (calculateB(points, bs, i, k - 1, t).mul(1 - t)).add(
+                           calculateB(points, bs, i + 1, k - 1, t).mul(t));
+                for(let i = 0; i < points[k-1].length; i++){
+                    if(points[k-1][i].x == val.x && points[k-1][i].y == val.y)
+                        return val;
+                }
+                points[k-1].push(val);
+                return val;
+            }
+            let points = [[], [], []];
+            let colsP = ["#AA0000", "#00AA00", "#0000AA"];
+            let colsL = ["#FF0000", "#00FF00", "#0000FF"];
+            let bs = [this.p0, this.p1, this.p2, this.p3, new Point3D()];
+            calculateB(points, bs, 0, 3, t);
+            drawCircle(this.p0, "#555555", 4);
+            drawCircle(this.p1, "#555555", 4);
+            drawCircle(this.p2, "#555555", 4);
+            drawCircle(this.p3, "#555555", 4);
+            drawLine(new Line3D(this.p0, this.p1));
+            drawLine(new Line3D(this.p1, this.p2));
+            drawLine(new Line3D(this.p2, this.p3));
+            for(let i = 0; i < 3; i++){
+                for(let j = 0; j < points[i].length; j++)
+                    drawCircle(points[i][j], colsP[i], 4);
+                for(let j = 0; j < points[i].length - 1; j++)
+                    drawLine(new Line3D(points[i][j], points[i][j+1]), colsL[i]);
+            }
+        }
+
+        drawCPoints() {
+            drawCircle(this.p0, '#EE0000', 0.003*size);
+            drawCircle(this.p1, '#EE0000', 0.003*size);
+            drawCircle(this.p2, '#EE0000', 0.003*size);
+            drawCircle(this.p2, '#EE0000', 0.003*size);
+
+            const l0 = new Line3D(this.p0, this.p1);
+            const l1 = new Line3D(this.p1, this.p2);
+            const l2 = new Line3D(this.p2, this.p3);
+
+            drawLine(l0, '#AA0000');
+            drawLine(l1, '#AA0000');
+            drawLine(l2, '#AA0000');
+        }
+
+        drawCurve() {
+            function calculateP(bs, i, k, t) {
+                if(k == 0)
+                    return bs[i];
+                return (calculateP(bs, i, k - 1, t).mul(1 - t)).add(
+                           calculateP(bs, i + 1, k - 1, t).mul(t));
+            }
+            let step = 0.002;
+            let bs = [this.p0, this.p1, this.p2, this.p3, new Point3D()];
+            for(let t = 0; t <= 1; t += step){
+                let p = calculateP(bs, 0, 3, t);
+                drawCircle(p, "#0000FF");
+            }
+        }
+    }
+
+    // create array of Curves
+    let curvesarray = [];
+
+    function createCurves() {
+        const l = 0.2*size;
+        const p00 = new Point3D(-l,0.5*l,-0.15*size);
+        const p01 = new Point3D(-l,-0.5*l,-0.15*size);
+        const p02 = new Point3D(l,-0.5*l,-0.15*size);
+        const p03 = new Point3D(l,0.5*l,-0.15*size);
+
+        const p10 = new Point3D(-l,0.5*l,-0.05*size);
+        const p11 = new Point3D(l,-0.5*l,-0.05*size);
+        const p12 = new Point3D(-l,-0.5*l,-0.05*size);
+        const p13 = new Point3D(l,0.5*l,-0.05*size);
+
+        const p20 = new Point3D(-l,-0.5*l,0.05*size);
+        const p21 = new Point3D(-l,0.5*l,0.05*size);
+        const p22 = new Point3D(-l,0.5*l,0.05*size);
+        const p23 = new Point3D(l,-0.5*l,0.05*size);
+
+        const p30 = new Point3D(-l,-0.5*l,0.15*size);
+        const p31 = new Point3D(-l,0.5*l,0.15*size);
+        const p32 = new Point3D(l,0.5*l,0.15*size);
+        const p33 = new Point3D(l,-0.5*l,0.15*size);
+
+        curvesarray.push(new BezierCurve(p00, p01, p02, p03));
+        curvesarray.push(new BezierCurve(p10, p11, p12, p13));
+        curvesarray.push(new BezierCurve(p20, p21, p22, p23));
+        curvesarray.push(new BezierCurve(p30, p31, p32, p33));
+    }
+
+
+    let rotX = 0;
+    let rotY = 0;
+    let rotZ = 0;
+    // transform array of curves
+    function transformCurves(curvesarray) {
+        const transMat = mouseRotMat;
+        return curvesarray.map(curve => {
+            const p0 = transMat.mulVec(curve.p0);
+            const p1 = transMat.mulVec(curve.p1);
+            const p2 = transMat.mulVec(curve.p2);
+            const p3 = transMat.mulVec(curve.p3);
+            return new BezierCurve(p0, p1, p2, p3);
+        });
+    }
+
+    // project point
+    function projectPoint(point) {
+        const ex = 0;
+        const ey = 0;
+        const ez = 0.8*size;
+        const projMat = new Matrix4D(
+            1,0,-ex/ez,0,
+            0,1,-ey/ez,0,
+            0,0,1,0,
+            0,0,-1/ez,1
+        );
+        return projMat.mulVec(point).dehomogen();
+    }
+
+    // draw curves in curvesarray
+    function drawCurves(curvesarray) {
+        if (showCurve) {
+            // single curve and frame, aufgabe 1+2
+           curvesarray.forEach(curve => {
+                curve.drawFrame(tFrame);
+                curve.drawCurve();
+            });
+        } else {
+            // area, bonusaufgabe
+            curvesarray.forEach(curve => {
+                curve.drawCPoints();
+                curve.drawCurve('#00EE22', 0.002, .001);
+            });
+        }
+    }
+
+    // draw surfaces given array of curves
+    let trianglearray = [];
+    function drawSurface(curves, numPoints, color) {
+        trianglearray = [];
+        let curveOld = curves[0];
+
+        for (let k = 0; k < curves.length; k++) {
+            let curve = curves[k];
+            let pO = projectPoint(curveOld.getPoint(0));
+            let ppO = projectPoint(curve.getPoint(0));
+            for(let it = 0; it <= numPoints; it+=1) {
+                const t = it/numPoints;
+                const p = projectPoint(curveOld.getPoint(t));
+                const pp = projectPoint(curve.getPoint(t));
+                //drawPoint(p, color, 0.003*size);
+                trianglearray.push(new Triangle3D(pO, ppO, p, [.2,.6,.95]));
+                trianglearray.push(new Triangle3D(ppO, pp, p, [.2,.6,.95]));
+                pO = p;
+                ppO = pp;
+            }
+            curveOld = curve
+        }
+        let trianglesLit = lightTriangles(trianglearray);
+        drawTriangles(trianglesLit)
+    }
+
+    // update canvas
+    // true for Aufgabe1, false for Bonusaufgabe
+    let showCurve = true;
+    let numPoints = 20;
+    function updateCanvas () {
+        ctx.clearRect(0, 0, size, size);
+        imgd = ctx.createImageData(size,size);
+        d = imgd.data;
+        resetZBuf();
+        if (showCurve) {
+            const curves = [curvesarray[0]];
+            drawCurves(transformCurves(curves));
+        } else {
+            const nP1 = numPoints + 1;
+            const curvesTrans = transformCurves(curvesarray);
+// BEGIN BONUSAUFGABE
+
+// END BONUSAUFGABE
+            ctx.putImageData(imgd, 0, 0);
+            drawCurves(curvesTrans);
+        }
+    }
+
+    // mouse funcionality
+    let movePoints = true;
+    let mouseDown = false;
+    let mouseXOld = 0;
+    let mouseYOld = 0;
+    let mouseRotMat = new Matrix4D();
+    let nearestPoint;
+    let nearestDist;
+    let nearestIndex;
+    function mouseAction(event, clicked) {
+        if (clicked == 1) {
+            mouseDown = true;
+            mouseXOld = event.clientX;
+            mouseYOld = event.clientY;
+
+            // find nearest point
+            if (movePoints) {
+                const xM = mouseXOld - 0.5*size;
+                const yM = mouseYOld - 0.5*size;
+
+                function distance (x1 ,x2 ,y1 ,y2) {
+                   return Math.sqrt(Math.pow((x1-x2),2) + Math.pow((y1-y2),2));
+                }
+
+                // get nearest point of curvepoints to a given point
+                function getNearestPoint (c, x, y) {
+                    const p0p = projectPoint(c.p0);
+                    const p1p = projectPoint(c.p1);
+                    const p2p = projectPoint(c.p2);
+                    const p3p = projectPoint(c.p3);
+                    const d0 = distance(x, p0p.x, y, p0p.y);
+                    const d1 = distance(x, p1p.x, y, p1p.y);
+                    const d2 = distance(x, p2p.x, y, p2p.y);
+                    const d3 = distance(x, p3p.x, y, p3p.y);
+
+                    let nDist = d0;
+                    let nPoint = 0;
+                    if (d1 < nDist) {
+                        nDist = d1;
+                        nPoint = 1;
+                    }
+                    if (d2 < nDist) {
+                        nDist = d2;
+                        nPoint = 2;
+                    }
+                    if (d3 < nDist) {
+                        nDist = d3;
+                        nPoint = 3;
+                    }
+
+                    return [nPoint, nDist];
+                }
+
+                nearestDist = Infinity;
+                const curvesTrans = transformCurves(curvesarray);
+                curvesTrans.forEach((curve, i) => {
+                    let cnearest = getNearestPoint(curve, xM, yM);
+
+                    if (cnearest[1] < nearestDist) {
+                        nearestDist = cnearest[1];
+                        nearestPoint = cnearest[0];
+                        nearestIndex = i;
+                    }
+                });
+            }
+        } else if ( clicked == -1) {
+            mouseDown = false;
+        }
+
+        if (mouseDown) {
+            const mouseX = event.clientX;
+            const mouseY = event.clientY;
+            // check if mouse movement is at least one pixel of canvas
+            if ((mouseX != mouseXOld) || (mouseY != mouseYOld)) {
+                const x1 = mouseXOld - 0.5*size;
+                const y1 = mouseYOld - 0.5*size;
+                const x2 = mouseX - 0.5*size;
+                const y2 = mouseY - 0.5*size;
+
+                if (movePoints) {
+                    // move nearest point
+                    const deltaX = mouseX - mouseXOld;
+                    const deltaY = mouseY - mouseYOld;
+
+                    if (nearestPoint == 0) {
+                        curvesarray[nearestIndex].p0.x += deltaX;
+                        curvesarray[nearestIndex].p0.y += deltaY;
+                    } else if (nearestPoint == 1) {
+                        curvesarray[nearestIndex].p1.x += deltaX;
+                        curvesarray[nearestIndex].p1.y += deltaY;
+                    } else if (nearestPoint == 2) {
+                        curvesarray[nearestIndex].p2.x += deltaX;
+                        curvesarray[nearestIndex].p2.y += deltaY;
+                    } else {
+                        curvesarray[nearestIndex].p3.x += deltaX;
+                        curvesarray[nearestIndex].p3.y += deltaY;
+                    }
+                } else {
+                    // rotate with virtual trackball
+
+                    // compute V
+                    function computeV (x, y, r=size/4) {
+                        const d = x*x + y*y;
+                        const r2 = r*r;
+                        if (d <= r2/2) {
+                            var z = Math.sqrt(r2 - d);
+                        } else {
+                            var z = (r2/2)/Math.sqrt(d);
+                        }
+                        return new Vector3D(x, y, z).normalize();
+                    }
+
+                    // compute rotation axis and angle
+                    const v1 = computeV(x1, y1);
+                    const v2 = computeV(x2, y2);
+                    const n = v1.cross(v2).normalize();
+
+                    // create rotation matrix corresponding to current mouse movement
+                    const theta = Math.acos(v1.dot(v2));
+                    const ct = Math.cos(theta);
+                    const st = Math.sin(theta);
+                    const rotMat = new Matrix4D(
+                        ct+n.x*n.x*(1-ct), n.x*n.y*(1-ct)-n.z*st, n.x*n.z*(1-ct)+n.y*st, 0,
+                        n.y*n.x*(1-ct)+n.z*st, ct+n.y*n.y*(1-ct), n.y*n.z*(1-ct)-n.x*st, 0,
+                        n.z*n.x*(1-ct)-n.y*st, n.z*n.y*(1-ct)+n.x*st, ct+n.z*n.z*(1-ct), 0,
+                        0, 0, 0, 1
+                    );
+                    // update rotation matrix of all mouse movements
+                    mouseRotMat = rotMat.mulMat(mouseRotMat);
+                }
+
+                updateCanvas();
+                mouseXOld = mouseX;
+                mouseYOld = mouseY;
+            }
+        }
+    }
+
+
+    // checkbox functionality
+    document.getElementById("dcurve").checked = true;
+    function curveCheckBoxFunction() {
+        showCurve = document.getElementById("dcurve").checked;
+        document.getElementById("darea").checked = !showCurve;
+        updateCanvas();
+    }
+
+    document.getElementById("darea").checked = false;
+    function areaCheckBoxFunction() {
+        showCurve = !document.getElementById("darea").checked;
+        document.getElementById("dcurve").checked = showCurve;
+        updateCanvas();
+    }
+
+    document.getElementById("movePoints").checked = true;
+    function moveCheckBoxFunction() {
+        movePoints = document.getElementById("movePoints").checked;
+        updateCanvas();
+    }
+
+    // slider t parameters
+    const sliderT = document.getElementById("sliderT");
+    const dispT = document.getElementById("t");
+    dispT.innerHTML = tFrame;
+    sliderT.oninput = function() {
+        tFrame = Number.parseFloat(this.value);
+        dispT.innerHTML = tFrame;
+        updateCanvas();
+    }
+
+    // slider numPoints parameters
+    const sliderNP = document.getElementById("sliderNP");
+    const dispNP = document.getElementById("nP");
+    dispNP.innerHTML = numPoints;
+    sliderNP.oninput = function() {
+        numPoints = Number.parseFloat(this.value);
+        dispNP.innerHTML = numPoints;
+        updateCanvas();
+    }
+
+    //set correct sizes
+    function setSizes () {
+        document.getElementById("myCanvas").setAttribute("width", size);
+        document.getElementById("myCanvas").setAttribute("height", size);
+    }
+
+    // create lines and triangles, init canvas
+    setSizes();
+    initZBuf();
+    createCurves();
+    updateCanvas();
+
+</script>
+
+</body>
+</html>
